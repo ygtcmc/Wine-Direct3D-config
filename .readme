@@ -1,0 +1,1 @@
+实际上就是把HKCU\Software\Wine\Direct3D下的renderer(主渲染)改为gdi就可以了,其他东西来自脑子一抽,所以没测试
