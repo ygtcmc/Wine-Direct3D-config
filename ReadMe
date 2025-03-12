@@ -1,1 +1,4 @@
 实际上就是把HKCU\Software\Wine\Direct3D下的renderer(主渲染)改为gdi就可以了,其他东西来自脑子一抽,所以没测试
+wined3dconfig.sh:用来在各个模式切换用的脚本
+winedgi:用法：/usr/bin/winedgi /path/to/game.exe
+功能：临时切换为gdi模式运行游戏，退出后自动恢复原配置
