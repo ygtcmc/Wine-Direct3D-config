@@ -1,0 +1,65 @@
+#!/bin/bash
+# Wine游戏启动器 - 临时切换渲染器模式
+
+# 配置备份文件路径（用户目录更安全）
+BACKUP_FILE="${HOME}/.wine_d3d_backup.reg"
+
+# 确保退出时恢复配置（包括Ctrl+C中断）
+trap restore_settings EXIT INT TERM
+
+# --------------- 功能函数 ---------------
+
+# 备份当前设置
+backup_settings() {
+  echo "正在备份当前图形设置..."
+  wine reg export "HKCU\Software\Wine\Direct3D" "$BACKUP_FILE" >/dev/null 2>&1
+  if [ $? -ne 0 ]; then
+    echo "错误：无法备份注册表设置"
+    exit 3
+  fi
+}
+
+# 应用临时gdi配置
+set_gdi_mode() {
+  echo "切换到软件渲染模式..."
+  wine reg add "HKCU\Software\Wine\Direct3D" /v renderer /d "gdi" /f >/dev/null
+  wine reg add "HKCU\Software\Wine\Direct3D" /v CSMT /t REG_DWORD /d 0 /f >/dev/null
+  wine reg add "HKCU\Software\Wine\Direct3D" /v UseGLSL /t REG_DWORD /d 0 /f >/dev/null
+}
+
+# 恢复原始配置
+restore_settings() {
+  if [ -f "$BACKUP_FILE" ]; then
+    echo -e "\n正在恢复原始配置..."
+    wine reg import "$BACKUP_FILE" >/dev/null 2>&1
+    rm -f "$BACKUP_FILE"
+    echo "配置恢复完成"
+  fi
+}
+
+# --------------- 主逻辑 ---------------
+
+# 参数检查
+if [ $# -eq 0 ] || [ ! -f "$1" ]; then
+  echo "用法：$0 /path/to/game.exe"
+  echo "功能：临时切换为gdi模式运行游戏，退出后自动恢复原配置"
+  exit 1
+fi
+
+# 禁止重复运行
+if [ -f "$BACKUP_FILE" ]; then
+  echo "检测到未清理的备份文件，可能已有实例在运行"
+  echo "如需强制运行，请手动删除：$BACKUP_FILE"
+  exit 2
+fi
+
+# 执行配置修改
+backup_settings
+set_gdi_mode
+
+# 启动游戏
+echo -e "\n启动游戏中... (按 Ctrl+C 结束游戏并恢复配置)"
+wine "$1"
+
+# 自动触发恢复（正常退出时）
+exit 0%                                                                                                                               
