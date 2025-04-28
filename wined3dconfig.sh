@@ -1,5 +1,5 @@
 #!/bin/bash
-# Wine Direct3D 配置工具（带参数说明）
+# Wine Direct3D 配置工具（包含详细的注册表参数配置）
 
 # 检查Wine是否安装
 if ! command -v wine &> /dev/null; then
@@ -10,18 +10,23 @@ fi
 # 获取当前配置函数
 get_current_config() {
   current_renderer=$(wine reg query "HKCU\Software\Wine\Direct3D" /v renderer 2>/dev/null | awk -F' ' '/REG_SZ/ {print $NF}')
-  ddraw_renderer=$(wine reg query "HKCU\Software\Wine\Direct3D" /v DirectDrawRenderer 2>/dev/null | awk -F' ' '/REG_SZ/ {print $NF}')
+  
+  # 获取 CSMT 状态，确保其为有效的整数
+  csmt_status=$(wine reg query "HKCU\Software\Wine\Direct3D" /v csmt 2>/dev/null | awk -F' ' '/REG_DWORD/ {print $NF}' || echo "0")
+  csmt_status=$(echo "$csmt_status" | sed 's/0x//')  # 去掉0x前缀
 
-  csmt_status=$(wine reg query "HKCU\Software\Wine\Direct3D" /v CSMT 2>/dev/null | grep -oP '0x\K[0-9A-Fa-f]+' || echo "0")
-  csmt_status=$((0x$csmt_status))  # 确保转换为十进制
+  # 确保 csmt_status 仅为数字并进行算术处理
+  if [[ ! "$csmt_status" =~ ^[0-9]+$ ]]; then
+    csmt_status=0
+  fi
+  csmt_status=$((csmt_status))  # 确保它是整数
 
-  glsl_status=$(wine reg query "HKCU\Software\Wine\Direct3D" /v UseGLSL 2>/dev/null | grep -oP '0x\K[0-9A-Fa-f]+' || echo "1")
-  glsl_status=$((0x$glsl_status))
-
-  strict_shaders=$(wine reg query "HKCU\Software\Wine\Direct3D" /v StrictShaders 2>/dev/null | grep -oP '0x\K[0-9A-Fa-f]+' || echo "0")
-  strict_shaders=$((0x$strict_shaders))
+  multisample_textures=$(wine reg query "HKCU\Software\Wine\Direct3D" /v MultisampleTextures 2>/dev/null | awk -F' ' '/REG_DWORD/ {print $NF}' || echo "1")
+  sample_count=$(wine reg query "HKCU\Software\Wine\Direct3D" /v SampleCount 2>/dev/null | awk -F' ' '/REG_DWORD/ {print $NF}' || echo "1")
+  shader_backend=$(wine reg query "HKCU\Software\Wine\Direct3D" /v shader_backend 2>/dev/null | awk -F' ' '/REG_SZ/ {print $NF}' || echo "glsl")
+  strict_shader_math=$(wine reg query "HKCU\Software\Wine\Direct3D" /v strict_shader_math 2>/dev/null | awk -F' ' '/REG_DWORD/ {print $NF}' || echo "0")
+  glsl_status=$(wine reg query "HKCU\Software\Wine\Direct3D" /v UseGLSL 2>/dev/null | awk -F' ' '/REG_SZ/ {print $NF}' || echo "glsl")
 }
-
 
 # 显示当前配置（带参数说明）
 show_status() {
@@ -29,18 +34,21 @@ show_status() {
   echo ""
   echo "================ 当前图形配置 ================"
   printf " %-25s : %s\n" \
-    "主渲染器 (3D API)" "${current_renderer:-auto}" \
-    "CSMT多线程 (多核优化)" "$([ "${csmt_status:-0}" -eq 1 ] && echo "enabled" || echo "disabled")" \
-    "GLSL着色器 (硬件着色)" "$([ "${glsl_status:-1}" -eq 1 ] && echo "enabled" || echo "disabled")" \
-    "严格着色器 (兼容模式)" "$([ "${strict_shaders:-0}" -eq 1 ] && echo "enabled" || echo "disabled")" \
-    "DDraw渲染器 (2D加速)" "${ddraw_renderer:-gdi}"
+    "主渲染器" "${current_renderer:-auto}" \
+    "CSMT 多线程" "$([ "$csmt_status" -eq 1 ] && echo "enabled" || echo "disabled")" \
+    "多重采样纹理" "$([ "${multisample_textures:-1}" -eq 1 ] && echo "enabled" || echo "disabled")" \
+    "交换链采样计数" "${sample_count:-1}" \
+    "着色器后端" "${shader_backend:-glsl}" \
+    "严格着色器数学" "$([ "${strict_shader_math:-0}" -eq 1 ] && echo "enabled" || echo "disabled")" \
+    "GLSL 着色器" "${glsl_status:-glsl}"
   echo "----------------------------------------------"
   echo "参数说明："
-  echo "1) 主渲染器: 选择3D图形接口（auto=自动选择最佳）"
+  echo "1) 主渲染器: 选择3D图形接口"
   echo "2) CSMT    : 提升多核CPU渲染性能，可能影响兼容性"
-  echo "3) GLSL    : 启用硬件着色器加速，建议保持开启"
-  echo "4) 严格模式: 严格遵循着色器规范，解决部分图形错误"
-  echo "5) DDraw   : 影响2D游戏和视频播放性能"
+  echo "3) 多重采样纹理: 启用或禁用纹理的多重采样"
+  echo "4) 交换链采样计数: 设置强制启用的多重采样计数"
+  echo "5) 着色器后端: 设置使用的着色器语言（glsl、arb或none）"
+  echo "6) 严格着色器数学: 关闭激进优化来解决渲染错误"
   echo "=============================================="
 }
 
@@ -104,17 +112,21 @@ advanced_menu() {
   echo ""
   echo "------ 高级参数配置 ------"
   echo " 1. 切换 CSMT 多线程 [当前: $([ "${csmt_status:-0}" -eq 1 ] && echo "enabled" || echo "disabled")]"
-  echo " 2. 切换 GLSL 着色器 [当前: $([ "${glsl_status:-1}" -eq 1 ] && echo "enabled" || echo "disabled")]"
-  echo " 3. 切换严格着色器   [当前: $([ "${strict_shaders:-0}" -eq 1 ] && echo "enabled" || echo "disabled")]"
-  echo " 4. 设置 DDraw 渲染器"
+  echo " 2. 切换多重采样纹理 [当前: $([ "${multisample_textures:-1}" -eq 1 ] && echo "enabled" || echo "disabled")]"
+  echo " 3. 设置交换链采样计数 [当前: $sample_count]"
+  echo " 4. 切换着色器后端 [当前: $shader_backend]"
+  echo " 5. 切换严格着色器数学 [当前: $([ "${strict_shader_math:-0}" -eq 1 ] && echo "enabled" || echo "disabled")]"
+  echo " 6. 切换 GLSL 着色器 [当前: $([ "${glsl_status:-glsl}" == "glsl" ] && echo "enabled" || echo "disabled")]"
   echo " 0. 返回主菜单"
-  read -rp "请输入选择 [0-4]: " adv_choice
+  read -rp "请输入选择 [0-6]: " adv_choice
 
   case $adv_choice in
-    1) toggle_param "CSMT" ;;
-    2) toggle_param "UseGLSL" ;;
-    3) toggle_param "StrictShaders" ;;
-    4) set_ddraw ;;
+    1) toggle_param "csmt" ;;
+    2) toggle_param "MultisampleTextures" ;;
+    3) set_sample_count ;;
+    4) set_shader_backend ;;
+    5) toggle_param "strict_shader_math" ;;
+    6) toggle_param "UseGLSL" ;;
     0) main_menu ;;
     *) echo "无效输入"; sleep 1; advanced_menu ;;
   esac
@@ -133,28 +145,38 @@ toggle_param() {
   advanced_menu
 }
 
-# 设置 DDraw 渲染器
-set_ddraw() {
-  echo ""
-  echo "------ 设置 DirectDraw 渲染器 ------"
-  echo " 1. gdi     - 软件渲染"
-  echo " 2. opengl  - OpenGL加速"
-  echo " 3. d3d9    - 原生D3D9"
-  echo " 4. auto    - 自动选择"
-  echo " 0. 返回上级菜单"
-  read -rp "请输入选择 [0-4]: " ddraw_choice
-  
-  case $ddraw_choice in
-    1) val="gdi" ;;
-    2) val="opengl" ;;
-    3) val="d3d9" ;;
-    4) val="auto" ;;
-    0) advanced_menu; return ;;
+# 设置交换链采样计数
+set_sample_count() {
+  read -rp "请输入新的采样计数 (如: 1, 2, 4): " count
+  if ! [[ "$count" =~ ^[0-9]+$ ]]; then
+    echo "无效输入，请输入一个正整数"
+    sleep 1
+    set_sample_count
+    return
+  fi
+  wine reg add "HKCU\Software\Wine\Direct3D" /v SampleCount /t REG_DWORD /d "$count" /f >/dev/null 2>&1
+  echo "交换链采样计数已设置为: $count"
+  sleep 1
+  advanced_menu
+}
+
+# 设置着色器后端
+set_shader_backend() {
+  echo "选择着色器后端:"
+  echo " 1. glsl"
+  echo " 2. arb"
+  echo " 3. none"
+  read -rp "请输入选择 [1-3]: " backend_choice
+
+  case $backend_choice in
+    1) val="glsl" ;;
+    2) val="arb" ;;
+    3) val="none" ;;
     *) echo "无效选择"; return ;;
   esac
-  
-  wine reg add "HKCU\Software\Wine\Direct3D" /v DirectDrawRenderer /d "$val" /f >/dev/null 2>&1
-  echo "DDraw 渲染器已设置为: $val"
+
+  wine reg add "HKCU\Software\Wine\Direct3D" /v shader_backend /d "$val" /f >/dev/null 2>&1
+  echo "着色器后端已设置为: $val"
   sleep 1
   advanced_menu
 }
@@ -162,10 +184,12 @@ set_ddraw() {
 # 重置默认配置
 reset_default() {
   wine reg delete "HKCU\Software\Wine\Direct3D" /v renderer /f >/dev/null 2>&1
-  wine reg delete "HKCU\Software\Wine\Direct3D" /v CSMT /f >/dev/null 2>&1
+  wine reg delete "HKCU\Software\Wine\Direct3D" /v csmt /f >/dev/null 2>&1
+  wine reg delete "HKCU\Software\Wine\Direct3D" /v MultisampleTextures /f >/dev/null 2>&1
+  wine reg delete "HKCU\Software\Wine\Direct3D" /v SampleCount /f >/dev/null 2>&1
+  wine reg delete "HKCU\Software\Wine\Direct3D" /v shader_backend /f >/dev/null 2>&1
+  wine reg delete "HKCU\Software\Wine\Direct3D" /v strict_shader_math /f >/dev/null 2>&1
   wine reg delete "HKCU\Software\Wine\Direct3D" /v UseGLSL /f >/dev/null 2>&1
-  wine reg delete "HKCU\Software\Wine\Direct3D" /v StrictShaders /f >/dev/null 2>&1
-  wine reg delete "HKCU\Software\Wine\Direct3D" /v DirectDrawRenderer /f >/dev/null 2>&1
   echo "已重置为默认配置"
   sleep 1
   main_menu
